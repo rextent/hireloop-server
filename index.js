@@ -16,6 +16,12 @@ app.use((req, res, next) => {
     next();
 });
 
+const logger = (req, res, next) => {
+    console.log('logger middleware logged', req.params);
+    next();
+};
+
+
 const uri = process.env.MONGO_DB_URI;
 const client = new MongoClient(uri, {
     serverApi: {
@@ -37,10 +43,86 @@ async function run() {
         const subscriptionCollection = database.collection('subscription');
         // স্ক্রিনশট অনুযায়ী কালেকশনের নাম 'user'
         const userCollection = database.collection("user");
+        const sessionCollection = database.collection("session");
+
+
+        // verification related
+        const verifyToken = async (req, res, next) => {
+            console.log("VERIFY TOKEN STARTED");
+            console.log("AUTH HEADER:", req.headers.authorization);
+            // console.log('headers', req.headers)
+            const authHeader = req.headers?.authorization
+
+            if (!authHeader) {
+                return res.status(401).send({ message: 'Unauthorized Access' })
+            }
+
+            const token = authHeader.split(' ')[1]
+
+            if (!token) {
+                return res.status(401).send({ message: 'Unauthorized access' })
+            }
+
+            const query = { token: token }
+            const session = await sessionCollection.findOne(query)
+
+            const userId = session.userId;
+            console.log("userId of the session:", userId);
+
+            const userQuery = {
+                _id: userId
+            }
+            const user = await userCollection.findOne(userQuery);
+            console.log('user id of the session', user)
+
+            // // set data in the req object
+            req.user = user;
+            // console.log('Authorization:', req.headers.authorization);
+            // console.log('Token:', token);
+            // console.log('Session:', session);
+
+            next();
+        }
+
+        // must be used after verifyToken middleware
+        const verifySeeker = async (req, res, next) => {
+            if (req.user?.role !== 'seeker') {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next();
+        }
+
+        // Verify recruiter
+        const verifyRecruiter = async (req, res, next) => {
+            if (req.user?.role !== 'recruiter') {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next();
+        }
+
+        // must be used after verifyToken middleware
+        const verifyAdmin = async (req, res, next) => {
+            console.log('User:', req.user);
+            if (req.user.role !== 'admin') {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next();
+        }
+
 
         // Job related APIs
         app.get('/api/jobs', async (req, res) => {
+            console.log('server side q', req.query);
             const query = {};
+            // job filter related query
+            if(req.query.type){
+                query.type = req.query.type
+            }
+            if(req.query.category){
+                query.category = req.query.category
+            }
+
+            // Company related query
             if (req.query.companyId) query.companyId = req.query.companyId;
             if (req.query.status) query.status = req.query.status;
             const result = await jobs.find(query).toArray();
@@ -54,7 +136,7 @@ async function run() {
         });
 
         // company related apis
-        app.get('/api/companies', async(req, res) =>{
+        app.get('/api/companies', verifyToken, async (req, res) => {
             const cursor = companyCollection.find();
             const result = await cursor.toArray();
             res.send(result);
@@ -138,12 +220,12 @@ async function run() {
             }
         });
 
-        app.patch('/api/companies/:id', async(req, res) =>{
+        app.patch('/api/companies/:id', logger, verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             console.log("ID received in server:", id); // ১. আইডি চেক
             console.log("Body received in server:", req.body); // ২. বডি চেক
-            const updatedCompany= req.body;
-            const filter = {_id: new ObjectId(id)}
+            const updatedCompany = req.body;
+            const filter = { _id: new ObjectId(id) }
             const updatedDoc = {
                 $set: {
                     status: updatedCompany.status
@@ -187,12 +269,25 @@ async function run() {
         });
 
         // Application related API
-        app.get('/api/applications', async (req, res) => {
+        app.get('/api/applications', verifyToken, verifySeeker, async (req, res) => {
+            console.log("=== APPLICATION API HIT ===");
+
+            console.log("REQ USER:", req.user);
+
+            console.log("QUERY:", req.query);
             const query = {};
             if (req.query.applicantId && req.query.applicantId !== 'undefined') {
                 query.applicantId = req.query.applicantId;
+
+
+                // check whether asking for user information or someone else
+                console.log(req.user, req.query.applicantId)
+                if (req.user._id.toString() !== req.query.applicantId) {
+                    return res.status(403).send({ message: 'forbidden access' })
+                }
             }
             const result = await applicationsCollection.find(query).toArray();
+
             res.send(result);
         });
 
