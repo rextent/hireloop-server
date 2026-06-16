@@ -109,16 +109,20 @@ async function run() {
             next();
         }
 
+        app.get("/", (req, res) => {
+            res.send("HireLoop Server Running");
+        });
+
 
         // Job related APIs
         app.get('/api/jobs', async (req, res) => {
             console.log('server side q', req.query);
             const query = {};
             // job filter related query
-            if(req.query.type){
+            if (req.query.type) {
                 query.type = req.query.type
             }
-            if(req.query.category){
+            if (req.query.category) {
                 query.category = req.query.category
             }
 
